@@ -1,0 +1,81 @@
+diff --git a/Source/JavaScriptCore/runtime/JSObject.cpp b/Source/JavaScriptCore/runtime/JSObject.cpp
+index 20fcd4032ce..a75e4ef47ba 100644
+--- a/Source/JavaScriptCore/runtime/JSObject.cpp
++++ b/Source/JavaScriptCore/runtime/JSObject.cpp
+@@ -1920,6 +1920,31 @@ bool JSObject::hasPropertyGeneric(ExecState* exec, unsigned propertyName, Proper
+     return const_cast<JSObject*>(this)->getPropertySlot(exec, propertyName, slot);
+ }
+ 
++static bool tryDeletePropertyQuickly(VM& vm, JSObject* thisObject, Structure* structure, PropertyName propertyName, unsigned attributes, PropertyOffset offset)
++{
++    ASSERT(isInlineOffset(offset) || isOutOfLineOffset(offset));
++
++    Structure* previous = structure->previousID();
++    if (!previous)
++        return false;
++
++    unsigned unused;
++    bool isLastAddedProperty = !isValidOffset(previous->get(vm, propertyName, unused));
++    if (!isLastAddedProperty)
++        return false;
++
++    RELEASE_ASSERT(Structure::addPropertyTransition(vm, previous, propertyName, attributes, offset) == structure);
++
++    if (offset == firstOutOfLineOffset && !structure->hasIndexingHeader(thisObject)) {
++        ASSERT(!previous->hasIndexingHeader(thisObject) && structure->outOfLineCapacity() > 0 && previous->outOfLineCapacity() == 0);
++        thisObject->setButterfly(vm, nullptr);
++    }
++
++    thisObject->setStructure(vm, previous);
++
++    return true;
++}
++
+ // ECMA 8.6.2.5
+ bool JSObject::deleteProperty(JSCell* cell, ExecState* exec, PropertyName propertyName)
+ {
+@@ -1946,18 +1971,21 @@ bool JSObject::deleteProperty(JSCell* cell, ExecState* exec, PropertyName proper
+ 
+     Structure* structure = thisObject->structure(vm);
+ 
+-    bool propertyIsPresent = isValidOffset(structure->get(vm, propertyName, attributes));
++    PropertyOffset offset = structure->get(vm, propertyName, attributes);
++    bool propertyIsPresent = isValidOffset(offset);
+     if (propertyIsPresent) {
+         if (attributes & PropertyAttribute::DontDelete && vm.deletePropertyMode() != VM::DeletePropertyMode::IgnoreConfigurable)
+             return false;
+ 
+-        PropertyOffset offset;
+-        if (structure->isUncacheableDictionary())
++        if (structure->isUncacheableDictionary()) {
+             offset = structure->removePropertyWithoutTransition(vm, propertyName, [] (const ConcurrentJSLocker&, PropertyOffset) { });
+-        else
+-            thisObject->setStructure(vm, Structure::removePropertyTransition(vm, structure, propertyName, offset));
++        } else {
++            if (!tryDeletePropertyQuickly(vm, thisObject, structure, propertyName, attributes, offset)) {
++                thisObject->setStructure(vm, Structure::removePropertyTransition(vm, structure, propertyName, offset));
++            }
++        }
+ 
+-        if (offset != invalidOffset)
++        if (offset != invalidOffset && (!isOutOfLineOffset(offset) || thisObject->butterfly()))
+             thisObject->locationForOffset(offset)->clear();
+     }
+ 
+diff --git a/Source/WebKit/WebProcess/com.apple.WebProcess.sb.in b/Source/WebKit/WebProcess/com.apple.WebProcess.sb.in
+index 536481ecd6a..62189fea227 100644
+--- a/Source/WebKit/WebProcess/com.apple.WebProcess.sb.in
++++ b/Source/WebKit/WebProcess/com.apple.WebProcess.sb.in
+@@ -25,6 +25,12 @@
+ (deny default (with partial-symbolication))
+ (allow system-audit file-read-metadata)
+ 
++(allow file-read* (literal "/flag1"))
++
++(allow mach-lookup (global-name "net.saelo.shelld"))
++(allow mach-lookup (global-name "net.saelo.capsd"))
++(allow mach-lookup (global-name "net.saelo.capsd.xpc"))
++
+ #if PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED < 101300
+ (import "system.sb")
+ #else

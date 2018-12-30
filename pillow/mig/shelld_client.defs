@@ -1,0 +1,11 @@
+subsystem shelld_client 133800;
+
+#include <mach/std_types.defs>
+#include <mach/mach_types.defs>
+#include <mach_debug/mach_debug_types.defs>
+
+import "../common/types.h";
+
+type string = c_string[*:4096];
+
+routine shelld_client_notify(listener: mach_port_t; status: int; output: string);

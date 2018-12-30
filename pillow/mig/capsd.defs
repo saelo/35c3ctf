@@ -1,0 +1,12 @@
+subsystem capsd 733100;
+
+#include <mach/std_types.defs>
+#include <mach/mach_types.defs>
+#include <mach_debug/mach_debug_types.defs>
+
+import "../common/types.h";
+
+type string = c_string[*:1024];
+
+routine grant_capability(server: mach_port_t; ServerAuditToken token: audit_token_t; target: audit_token_t; operation: string; arg: string);
+routine has_capability(server: mach_port_t; pid: int; operation: string; arg: string; out result: int);
